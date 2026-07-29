@@ -110,7 +110,7 @@ jobs:
       - name: Validate patches
         run: |
           set -euo pipefail
-          python3 ./uc/devutils/validate_patches.py -l chromium_src -v
+          python3 ./uc/devutils/validate_patches.py -l chromium_src -s uc/patches/series -v
 
       - name: Validate source file lists
         run: |
