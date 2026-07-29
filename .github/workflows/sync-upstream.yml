@@ -1,0 +1,68 @@
+name: Sync with Upstream
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get latest upstream release
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          LATEST_TAG=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
+            https://api.github.com/repos/ungoogled-software/ungoogled-chromium/releases/latest \
+
+            | jq -r '.tag_name')
+          
+          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+            echo "Failed to fetch upstream tag"
+            echo "HAS_UPDATE=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          
+          echo "Upstream latest: $LATEST_TAG"
+          echo "LATEST_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Check if already built
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          LATEST_TAG="${{ steps.upstream.outputs.LATEST_TAG }}"
+          
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${GH_TOKEN}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${LATEST_TAG}")
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "Version $LATEST_TAG already built, skipping."
+            echo "HAS_UPDATE=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version $LATEST_TAG detected!"
+            echo "HAS_UPDATE=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger build workflow
+        if: steps.check.outputs.HAS_UPDATE == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          gh workflow run build-tarball.yml \
+            --repo ${{ github.repository }} \
+            -f upstream_tag="${{ steps.upstream.outputs.LATEST_TAG }}"
+          
+          echo "Build triggered for ${{ steps.upstream.outputs.LATEST_TAG }}"
