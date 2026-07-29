@@ -1,0 +1,204 @@
+name: Generate Ungoogled Source Tarball
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: 'Upstream tag to build (leave empty for auto-detect)'
+        required: false
+        type: string
+  push:
+    tags: ['*']
+
+permissions:
+  contents: write
+
+jobs:
+  process-and-package:
+    runs-on: ubuntu-latest
+    outputs:
+      VERSION: ${{ steps.get_version.outputs.VERSION }}
+      UC_REF: ${{ steps.detect_ref.outputs.UC_REF }}
+      RELEASE_TAG: ${{ steps.finalize_tag.outputs.RELEASE_TAG }}
+    steps:
+      - name: Determine upstream ref
+        id: detect_ref
+        run: |
+          set -euo pipefail
+          
+          if [ -n "${{ inputs.upstream_tag }}" ]; then
+            TARGET_REF="${{ inputs.upstream_tag }}"
+            echo "Source: manual input"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TARGET_REF="${{ github.ref_name }}"
+            echo "Source: tag push"
+          else
+            TARGET_REF=$(curl -s https://api.github.com/repos/ungoogled-software/ungoogled-chromium/releases/latest | jq -r '.tag_name')
+            echo "Source: latest upstream release"
+          fi
+
+          REPO_URL="https://github.com/ungoogled-software/ungoogled-chromium.git"
+
+          if git ls-remote --exit-code --tags "$REPO_URL" "$TARGET_REF" >/dev/null 2>&1; then
+            echo "UC_REF=$TARGET_REF" >> "$GITHUB_OUTPUT"
+            echo "RELEASE_TAG=$TARGET_REF" >> "$GITHUB_OUTPUT"
+            echo "Using upstream ref: $TARGET_REF"
+          else
+            echo "UC_REF=master" >> "$GITHUB_OUTPUT"
+            echo "RELEASE_TAG=PENDING_VERSION" >> "$GITHUB_OUTPUT"
+            echo "Ref '$TARGET_REF' not found, falling back to master"
+          fi
+
+      - name: Checkout ungoogled-chromium
+        uses: actions/checkout@v4
+        with:
+          repository: ungoogled-software/ungoogled-chromium
+          path: uc
+          ref: ${{ steps.detect_ref.outputs.UC_REF }}
+          fetch-depth: 1
+
+      - name: Get Chromium Version
+        id: get_version
+        run: |
+          set -euo pipefail
+          VERSION=$(cat uc/chromium_version.txt)
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building Chromium version: ${VERSION}"
+
+      - name: Finalize Release Tag
+        id: finalize_tag
+        run: |
+          set -euo pipefail
+          RELEASE_TAG="${{ steps.detect_ref.outputs.RELEASE_TAG }}"
+          if [ "$RELEASE_TAG" = "PENDING_VERSION" ]; then
+            RELEASE_TAG="${{ steps.get_version.outputs.VERSION }}"
+            echo "Fallback tag resolved to: $RELEASE_TAG"
+          fi
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Python & Tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y python3-pip xz-utils
+
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          tool-cache: false
+          large-packages: false
+          docker-images: false
+
+      - name: Restore Download Cache
+        uses: actions/cache@v4
+        with:
+          path: chromium_download_cache
+          key: ${{ runner.os }}-chromium-${{ hashFiles('uc/chromium_version.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-chromium-
+
+      - name: Retrieve & Unpack Source
+        run: |
+          set -euo pipefail
+          mkdir -p chromium_download_cache
+          python3 ./uc/utils/downloads.py retrieve -i uc/downloads.ini -c chromium_download_cache
+          python3 ./uc/utils/downloads.py unpack -i uc/downloads.ini -c chromium_download_cache chromium_src
+
+      - name: Validate patches
+        run: |
+          set -euo pipefail
+          python3 ./uc/devutils/validate_patches.py -l chromium_src -v
+
+      - name: Validate source file lists
+        run: |
+          set -euo pipefail
+          python3 ./uc/devutils/check_files_exist.py chromium_src \
+            uc/pruning.list uc/domain_substitution.list
+
+      - name: Apply Ungoogled Processing
+        run: |
+          set -euo pipefail
+          python3 ./uc/utils/prune_binaries.py chromium_src uc/pruning.list
+          python3 ./uc/utils/patches.py apply chromium_src uc/patches
+          python3 ./uc/utils/domain_substitution.py apply \
+            -r uc/domain_regex.list \
+            -f uc/domain_substitution.list \
+            -c chromium_download_cache/domains_cache.tar.gz \
+            chromium_src
+
+      - name: Package Final Source Tarball
+        run: |
+          set -euo pipefail
+          tar -cJf ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.xz chromium_src
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ungoogled-source-tarball
+          path: ungoogled-chromium-*-source.tar.xz
+
+      - name: Generate Release Notes
+        run: |
+          set -euo pipefail
+          
+          cat > release_notes.md << 'EOF'
+          ## Ungoogled Chromium Source Tarball
+
+          **Chromium Version:** `VERSION_PLACEHOLDER`
+          **Upstream Ref:** `UC_REF_PLACEHOLDER`
+          **Generated:** TIMESTAMP_PLACEHOLDER
+
+          ### What's included
+          - Full Chromium source with ungoogled-chromium patches applied
+          - Binary files pruned per `pruning.list`
+          - Domain substitution applied
+          - Google-related telemetry and services removed
+
+          ### Source
+          - Upstream: [ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium)
+          - Chromium: [chromium.org](https://www.chromium.org/)
+
+          ### Usage
+          Download the `.tar.xz` file and extract:
+          ```bash
+          tar -xf ungoogled-chromium-VERSION_PLACEHOLDER-source.tar.xz
+
+          ```
+
+          > This is an **unofficial** automated build. Verify checksums before use.
+          EOF
+          
+          sed -i "s|VERSION_PLACEHOLDER|${{ steps.get_version.outputs.VERSION }}|g" release_notes.md
+          sed -i "s|UC_REF_PLACEHOLDER|${{ steps.detect_ref.outputs.UC_REF }}|g" release_notes.md
+          sed -i "s|TIMESTAMP_PLACEHOLDER|$(date -u +'%Y-%m-%d %H:%M:%S UTC')|g" release_notes.md
+          
+          echo "--- Generated Release Notes ---"
+          cat release_notes.md
+
+      - name: Generate Checksums
+        run: |
+          set -euo pipefail
+          sha256sum ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.xz > SHA256SUMS
+          sha512sum ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.xz > SHA512SUMS
+          echo "--- SHA256 ---"
+          cat SHA256SUMS
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.finalize_tag.outputs.RELEASE_TAG }}
+          name: "ungoogled-chromium ${{ steps.get_version.outputs.VERSION }}"
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.xz
+            SHA256SUMS
+            SHA512SUMS
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
