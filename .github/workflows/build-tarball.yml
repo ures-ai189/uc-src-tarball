@@ -123,6 +123,7 @@ jobs:
           set -euo pipefail
           python3 ./uc/utils/prune_binaries.py chromium_src uc/pruning.list
           python3 ./uc/utils/patches.py apply chromium_src uc/patches
+          rm -f chromium_download_cache/domains_cache.tar.gz
           python3 ./uc/utils/domain_substitution.py apply \
             -r uc/domain_regex.list \
             -f uc/domain_substitution.list \
