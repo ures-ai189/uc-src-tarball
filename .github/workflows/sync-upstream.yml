@@ -21,9 +21,7 @@ jobs:
           set -euo pipefail
           
           LATEST_TAG=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
-            https://api.github.com/repos/ungoogled-software/ungoogled-chromium/releases/latest \
-
-            | jq -r '.tag_name')
+            https://api.github.com/repos/ungoogled-software/ungoogled-chromium/releases/latest \ | jq -r '.tag_name')
           
           if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
             echo "Failed to fetch upstream tag"
