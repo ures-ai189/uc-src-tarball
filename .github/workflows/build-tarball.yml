@@ -104,8 +104,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p chromium_download_cache
-          python3 ./uc/utils/downloads.py retrieve uc/downloads.ini chromium_download_cache
-          python3 ./uc/utils/downloads.py unpack uc/downloads.ini chromium_download_cache chromium_src
+          python3 ./uc/utils/downloads.py retrieve -i uc/downloads.ini -c chromium_download_cache
+          python3 ./uc/utils/downloads.py unpack -i uc/downloads.ini -c chromium_download_cache chromium_src
 
       - name: Validate patches
         run: |
