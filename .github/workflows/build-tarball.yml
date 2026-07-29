@@ -80,7 +80,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y python3-pip xz-utils
+          sudo apt-get install -y python3-pip xz-utils zstd
 
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
@@ -132,13 +132,13 @@ jobs:
       - name: Package Final Source Tarball
         run: |
           set -euo pipefail
-          tar -cJf ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.xz chromium_src
+          tar -cf - chromium_src | zstd -T0 -19 -o ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.zst
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ungoogled-source-tarball
-          path: ungoogled-chromium-*-source.tar.xz
+          path: ungoogled-chromium-*-source.tar.zst
 
       - name: Generate Release Notes
         run: |
@@ -162,9 +162,10 @@ jobs:
           - Chromium: [chromium.org](https://www.chromium.org/)
 
           ### Usage
-          Download the `.tar.xz` file and extract:
+          Download the `.tar.zst` file and extract:
           ```bash
-          tar -xf ungoogled-chromium-VERSION_PLACEHOLDER-source.tar.xz
+          tar -xf ungoogled-chromium-VERSION_PLACEHOLDER-source.tar.zst
+          tar --zstd -xf ungoogled-chromium-VERSION_PLACEHOLDER-source.tar.zst
 
           ```
 
@@ -181,8 +182,8 @@ jobs:
       - name: Generate Checksums
         run: |
           set -euo pipefail
-          sha256sum ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.xz > SHA256SUMS
-          sha512sum ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.xz > SHA512SUMS
+          sha256sum ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.zst > SHA256SUMS
+          sha512sum ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.zst > SHA512SUMS
           echo "--- SHA256 ---"
           cat SHA256SUMS
 
@@ -195,7 +196,7 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.xz
+            ungoogled-chromium-${{ steps.get_version.outputs.VERSION }}-source.tar.zst
             SHA256SUMS
             SHA512SUMS
           generate_release_notes: false
