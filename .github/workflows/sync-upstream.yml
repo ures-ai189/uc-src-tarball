@@ -19,16 +19,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          
-          LATEST_TAG=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
-            https://api.github.com/repos/ungoogled-software/ungoogled-chromium/releases/latest \ | jq -r '.tag_name')
-          
+          API_JSON=$(curl -s -H "Authorization: token ${GH_TOKEN}" https://api.github.com/repos/ungoogled-software/ungoogled-chromium/releases/latest)
+          LATEST_TAG=$(echo "$API_JSON" | jq -r '.tag_name')
           if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
             echo "Failed to fetch upstream tag"
             echo "HAS_UPDATE=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          
           echo "Upstream latest: $LATEST_TAG"
           echo "LATEST_TAG=$LATEST_TAG" >> "$GITHUB_OUTPUT"
 
